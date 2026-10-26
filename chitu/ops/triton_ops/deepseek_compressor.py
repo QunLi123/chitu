@@ -17,6 +17,7 @@ import torch
 import triton
 import triton.language as tl
 
+from chitu.batched_freqs_cis import BatchedFreqsCis
 from chitu.ops.triton_ops.utils import auto_retry_triton_compilation
 
 # FIXME: The ragged metadata tensors and most pointer-offset arithmetic in this
@@ -1356,7 +1357,7 @@ def _hadamard_128(x):
 def postprocess_write_kv_cache_hadamard(
     kv_compress: torch.Tensor,
     norm_weight: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    freqs_cis: BatchedFreqsCis,
     kv_cache: torch.Tensor,
     block_table: torch.Tensor | None,
     start_positions: torch.Tensor,
@@ -1373,8 +1374,8 @@ def postprocess_write_kv_cache_hadamard(
     if bsz == 0:
         return
     paged = block_table is not None
-    freqs_real = freqs_cis.real
-    freqs_imag = freqs_cis.imag
+    freqs_real = freqs_cis.cos
+    freqs_imag = freqs_cis.sin
     D = kv_compress.shape[-1]
     BLOCK_D = triton.next_power_of_2(D)
     _postprocess_write_kv_cache_kernel[(bsz,)](
@@ -1410,7 +1411,7 @@ def postprocess_write_kv_cache_hadamard(
 def postprocess_write_kv_cache(
     kv_compress: torch.Tensor,
     norm_weight: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    freqs_cis: BatchedFreqsCis,
     kv_cache: torch.Tensor,
     block_table: torch.Tensor | None,
     start_positions: torch.Tensor,
@@ -1426,8 +1427,8 @@ def postprocess_write_kv_cache(
     if bsz == 0:
         return
     paged = block_table is not None
-    freqs_real = freqs_cis.real
-    freqs_imag = freqs_cis.imag
+    freqs_real = freqs_cis.cos
+    freqs_imag = freqs_cis.sin
     D = kv_compress.shape[-1]
     BLOCK_D = triton.next_power_of_2(D)
     _postprocess_write_kv_cache_kernel[(bsz,)](
@@ -1463,7 +1464,7 @@ def postprocess_write_kv_cache(
 def _postprocess_write_flashmla_kernel(
     kv_ptr,  # [bsz, D] fp32 compressed KV
     norm_weight_ptr,  # [D]
-    freqs_real_ptr,  # [max_seq, ROPE_DIM // 2], view of complex freqs
+    freqs_real_ptr,  # [max_seq, ROPE_DIM // 2], cos/sin table
     freqs_imag_ptr,
     kv_cache_ptr,  # [num_blocks, page_size, 584] uint8
     block_table_ptr,
@@ -1580,7 +1581,7 @@ def _postprocess_write_flashmla_kernel(
 def postprocess_write_flashmla(
     kv_compress: torch.Tensor,
     norm_weight: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    freqs_cis: BatchedFreqsCis,
     kv_cache: torch.Tensor,
     block_table: torch.Tensor,
     start_positions: torch.Tensor,
@@ -1597,8 +1598,8 @@ def postprocess_write_flashmla(
     bsz = start_positions.shape[0]
     if bsz == 0:
         return
-    freqs_real = freqs_cis.real
-    freqs_imag = freqs_cis.imag
+    freqs_real = freqs_cis.cos
+    freqs_imag = freqs_cis.sin
     _postprocess_write_flashmla_kernel[(bsz,)](
         kv_compress,
         norm_weight,
